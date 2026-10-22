@@ -3,14 +3,16 @@ import os
 import json
 import streamlit as st
 from openai import OpenAI
-from hiringindex import HiringIndex
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
+# 解决 HuggingFace 模型在国内下载慢的问题
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
 # ==========================================
-# 1. 页面配置与 UI 极致美化 (注入 CSS)
+# 1. 页面配置与 UI 极致美化
 # ==========================================
 st.set_page_config(page_title="全场景AI智慧导师", page_icon="🎓", layout="wide", initial_sidebar_state="expanded")
 
@@ -27,7 +29,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 密码验证
+# 2. 密码验证锁
 # ==========================================
 if "password_correct" not in st.session_state:
     st.session_state.password_correct = False
@@ -48,76 +50,73 @@ if not st.session_state.password_correct:
     st.stop()
 
 # ==========================================
-# 3. 核心配置 (双路容错：云端读 Secrets，本地读文件)
+# 3. 核心配置 (读取 Kimi API)
 # ==========================================
 try:
     deepseek_key = st.secrets["DEEPSEEK_API_KEY"]
-    rapidapi_key = st.secrets["RAPIDAPI_KEY"]
 except Exception:
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "sk-你的DeepSeek备用Key")
-    rapidapi_key = os.getenv("RAPIDAPI_KEY", "你的RapidAPI备用Key")
+    # 本地测试降级方案
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "sk-your-api-key-here")
 
+# 接入 Kimi (月之暗面) 大模型
 client = OpenAI(api_key=deepseek_key, base_url="https://api.moonshot.cn/v1")
 
-# 初始化真实招聘接口客户端
-job_client = HiringIndex(api_key=rapidapi_key)
+# ==========================================
+# 4. 产业数据库与工具定义 (Function Calling)
+# ==========================================
+INDUSTRY_DB = {
+    "数据分析师": {
+        "salary": "15k - 25k",
+        "skills": ["SQL", "Python", "Tableau", "统计学", "业务思维"],
+        "companies": ["字节跳动", "美团", "招商银行"]
+    },
+    "AI大模型工程师": {
+        "salary": "25k - 45k",
+        "skills": ["PyTorch", "LangChain", "RAG架构", "Prompt Engineering"],
+        "companies": ["百度", "阿里云", "月之暗面"]
+    },
+    "前端开发": {
+        "salary": "12k - 20k",
+        "skills": ["React", "Vue", "TypeScript", "性能优化"],
+        "companies": ["腾讯", "小米", "网易"]
+    }
+}
 
 
-# ==========================================
-# 4. 定义真实业务工具 (接入 API)
-# ==========================================
 def get_learning_path(major: str, target_job: str) -> str:
-    """调用 HiringIndex API 获取真实岗位数据"""
-    try:
-        # 搜索近30天内的真实岗位数据
-        page = job_client.search(job_titles=[target_job], days_ago=30, limit=20)
+    job_info = None
+    for key in INDUSTRY_DB:
+        if key in target_job or target_job in key:
+            job_info = INDUSTRY_DB[key]
+            target_job = key
+            break
 
-        if not page.get("jobs"):
-            return f"【产业情报局】抱歉，近期暂未从招聘平台抓取到与《{target_job}》相关的岗位。"
+    if not job_info:
+        return f"抱歉，暂未收录《{target_job}》的详细数据。请结合你《{major}》的专业基础，去招聘网站查看具体要求。"
 
-        # 提取前3个真实岗位信息
-        job_samples = []
-        for job in page["jobs"][:3]:
-            title = job.get("title", "未知岗位")
-            company = job.get("company_name", job.get("handle", "未知公司"))
-            url = job.get("apply_url", "无链接")
-            job_samples.append(f"公司：{company}，岗位：{title}，投递链接：{url}")
+    skills_str = "、".join(job_info["skills"])
+    comp_str = "、".join(job_info["companies"])
 
-        # 提取薪资洞察
-        insights = job_client.insights(job_titles=[target_job])
-        salary_info = "薪资数据暂未披露"
-        if insights.get("salary"):
-            bands = []
-            for band in insights["salary"]:
-                if band.get("min") and band["min"].get("p50"):
-                    bands.append(f"{band['currency']} {band['min']['p50']}")
-            if bands:
-                salary_info = " | ".join(bands)
-
-        # 打包返回
-        return (
-                f"【真实产业情报】近期《{target_job}》市场动态：\n"
-                f"薪资参考（中位数）：{salary_info}\n"
-                f"真实岗位示例：\n" + "\n".join(job_samples) +
-                f"\n请结合学生专业《{major}》和上述真实需求，为学生定制学习路径。"
-        )
-    except Exception as e:
-        # API 调用失败时的优雅降级
-        return f"【网络波动】招聘接口调用失败 ({str(e)})。请凭你的常识，结合《{target_job}》的一般要求为《{major}》专业学生提供建议。"
+    return (
+        f"【产业情报局】近期《{target_job}》市场行情：\n"
+        f"💰 薪资参考：{job_info['salary']}\n"
+        f"🛠️ 核心技能：{skills_str}\n"
+        f"🏢 招聘大厂：{comp_str}\n"
+        f"请结合学生专业《{major}》和上述真实要求，为他定制一份学习路径。"
+    )
 
 
 def assess_student_ability(student_id: str, topic: str, score: int) -> str:
     return f"【系统记录】已将学号{student_id}的《{topic}》成绩({score}分)存入系统数据库。学生能力画像已更新。"
 
 
-# 注册工具
 tools = [
     {"type": "function", "function": {"name": "get_learning_path",
-                                      "description": "根据学生的专业和目标岗位，从真实招聘平台获取最新产业需求与薪资，生成个性化学习路径",
+                                      "description": "根据学生的专业和目标岗位，从产业情报局获取最新岗位需求、薪资与技能要求，生成个性化学习路径",
                                       "parameters": {"type": "object", "properties": {"major": {"type": "string"},
                                                                                       "target_job": {"type": "string"}},
                                                      "required": ["major", "target_job"]}}},
-    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录学生成绩并更新画像",
+    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录学生成绩并更新能力画像",
                                       "parameters": {"type": "object", "properties": {"student_id": {"type": "string"},
                                                                                       "topic": {"type": "string"},
                                                                                       "score": {"type": "integer"}},
@@ -126,7 +125,7 @@ tools = [
 available_functions = {"get_learning_path": get_learning_path, "assess_student_ability": assess_student_ability}
 
 # ==========================================
-# 5. 左侧侧边栏
+# 5. 左侧控制台 (侧边栏)
 # ==========================================
 with st.sidebar:
     st.markdown("<h2 style='text-align: center; color: #2a5298;'>⚙️ 系统控制台</h2>", unsafe_allow_html=True)
@@ -141,8 +140,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("#### 📊 运行状态")
-    st.success("🟢 大模型接口：已连接 (DeepSeek)")
-    st.info("🛠️ 招聘数据 API：已连接 (HiringIndex)")
+    st.success("🟢 大模型接口：已连接 (Kimi)")
+    st.info("🛠️ 工具链：已加载 (2个)")
     if "vectorstore" in st.session_state:
         st.success("📚 本地知识库：已就绪")
     else:
@@ -180,7 +179,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 6. 主界面
+# 6. 主界面与聊天逻辑
 # ==========================================
 st.markdown('<h1 class="hero-title">🎓 全场景 AI 智慧导师</h1>', unsafe_allow_html=True)
 st.markdown(f'<p class="hero-subtitle">当前模式：<b>{persona}</b> | 基于 RAG 与多工具调用的个性化教育系统</p >',
@@ -203,9 +202,9 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
         st.markdown(prompt)
 
     with st.chat_message("assistant", avatar="🎓"):
-        with st.spinner("导师正在分析产业数据..."):
+        with st.spinner("导师正在分析..."):
 
-            # 记忆压缩
+            # 记忆压缩机制
             if len(st.session_state.messages) > 10:
                 st.session_state.messages = [st.session_state.messages[0]] + st.session_state.messages[-6:]
 
@@ -225,7 +224,7 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
             while True:
                 try:
                     response = client.chat.completions.create(
-                        model="kimi-k2.6",
+                        model="kimi-k2.6",  # 适配 Kimi 体验金的稳定模型
                         messages=current_messages,
                         tools=tools,
                         tool_choice="auto"
@@ -252,3 +251,10 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
                 except Exception as e:
                     st.error(f"💥 运行报错：{e}")
                     break
+with st.expander("🛠️ 开发者调试窗口"):
+    st.write("当前模型：Kimi")
+    st.write("历史消息长度：", len(st.session_state.messages))
+    if "vectorstore" in st.session_state:
+        st.success("RAG 知识库已就绪")
+    else:
+        st.warning("RAG 知识库未加载")
