@@ -36,9 +36,14 @@ if not st.session_state.password_correct:
 # 2. 核心客户端与大模型初始化
 # ==========================================
 # ⚠️ 【修改这里】填入你真实的 DeepSeek API Key
+import streamlit as st
 import os
+if "DEEPSEEK_API_KEY"in st.secrets:
+    api_key=st.secrets["DEEPSEEK_API_KEY"]
+else:
+    api_key="sk-placehoider-for-github"
 client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY","sk-你的本地Key"),
+    api_key=api_key,
     base_url="https://api.deepseek.com"
 )
 
