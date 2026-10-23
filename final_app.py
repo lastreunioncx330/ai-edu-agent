@@ -254,6 +254,80 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
 with st.expander("🛠️ 开发者调试窗口"):
     st.write("当前模型：Kimi")
     st.write("历史消息长度：", len(st.session_state.messages))
+    with st.sidebar:
+        st.markdown("<h2 style='text-align: center; color: #2a5298;'>⚙️ 系统控制台</h2>", unsafe_allow_html=True)
+
+        # ==========================================
+        # 🌟 新增功能：历史记录管理器
+        # ==========================================
+        st.markdown("#### 🗂️ 历史会话记录")
+
+        # 初始化历史会话池
+        if "all_sessions" not in st.session_state:
+            st.session_state.all_sessions = {}  # 字典格式：{"会话ID": {"title": "...", "messages": [...]}}
+
+        if "current_session_id" not in st.session_state:
+            st.session_state.current_session_id = "default"
+
+        # 搜索框
+        search_query = st.text_input("🔍 搜索历史记录（输入关键词）", placeholder="例如：数据分析师")
+
+        # 新建对话按钮
+        if st.button("➕ 开启全新对话", use_container_width=True):
+            import uuid
+
+            new_id = str(uuid.uuid4())[:8]  # 生成一个简短的随机ID
+            st.session_state.current_session_id = new_id
+            st.session_state.messages = [{"role": "system", "content": "你是一个全能的AI教育智能体..."}]
+            # 每次发消息时，同步更新历史记录池
+            if st.session_state.current_session_id not in st.session_state.all_sessions:
+                st.session_state.all_sessions[st.session_state.current_session_id] = {"title": prompt[:10],
+                                                                                      "messages": []}
+
+            # 用第一句话作为会话标题
+            if len(st.session_state.messages) <= 2:
+                st.session_state.all_sessions[st.session_state.current_session_id]["title"] = prompt[:15] + "..."
+
+            # 实时更新当前会话的最新消息
+            st.session_state.all_sessions[st.session_state.current_session_id]["messages"] = st.session_state.messages
+            st.session_state.all_sessions[new_id] = {
+                "title": f"新对话 {len(st.session_state.all_sessions) + 1}",
+                "messages": st.session_state.messages
+            }
+            st.rerun()
+
+        # 展示历史记录列表
+        if st.session_state.all_sessions:
+            for sid, session_data in list(st.session_state.all_sessions.items())[::-1]:  # 倒序排列
+                title = session_data.get("title", "未命名对话")
+
+                # 如果有搜索词，进行过滤
+                if search_query:
+                    # 检查标题或聊天记录里有没有这个词
+                    has_keyword = search_query in title or any(
+                        search_query in str(m.get("content", "")) for m in session_data["messages"])
+                    if not has_keyword:
+                        continue  # 没匹配到就跳过
+
+                # 用折叠面板展示每个历史记录
+                with st.expander(f"💬 {title}"):
+                    # 展示该会话的聊天气泡（截取最后几句展示）
+                    for msg in session_data["messages"][-4:]:
+                        if msg["role"] in ["user", "assistant"]:
+                            st.caption(f"**{msg['role']}**: {msg['content'][:50]}...")
+
+                    # 加载该记录
+                    if st.button("继续这段对话", key=f"load_{sid}", use_container_width=True):
+                        st.session_state.current_session_id = sid
+                        st.session_state.messages = session_data["messages"]
+                        st.rerun()
+
+        st.divider()
+        # ==========================================
+        # 下面是原有的角色选择、系统状态等代码
+        # ==========================================
+        persona = st.selectbox("选择导师人设", ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],key="persona_selector")
+        # ... （保留你原有的 prompt_map 和 状态监控 代码）...
     if "vectorstore" in st.session_state:
         st.success("RAG 知识库已就绪")
     else:
