@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+import time
+import base64
+import sqlite3
+import datetime
 import streamlit as st
 from openai import OpenAI
 from langchain_community.document_loaders import PyPDFLoader
@@ -8,11 +12,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-# 解决 HuggingFace 模型在国内下载慢的问题
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 # ==========================================
-# 1. 页面配置与 UI 极致美化
+# 1. 页面配置与 UI 美化
 # ==========================================
 st.set_page_config(page_title="全场景AI智慧导师", page_icon="🎓", layout="wide", initial_sidebar_state="expanded")
 
@@ -27,18 +30,53 @@ st.markdown("""
     .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(42, 82, 152, 0.4); }
 </style>
 """, unsafe_allow_html=True)
+# ==========================================
+# 2. 数据库初始化 (历史记录持久化)
+# ==========================================
+def init_db():
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, timestamp DATETIME)''')
+    conn.commit()
+    conn.close()
+
+def save_message(session_id, role, content):
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    # 如果是列表(图文混排)，只存文字部分
+    if isinstance(content, list):
+        content = "".join([item.get("text", "") for item in content if item.get("type") == "text"])
+    c.execute("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", (session_id, role, str(content), datetime.datetime.now()))
+    conn.commit()
+    conn.close()
+def get_messages(session_id):
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"role": row[0], "content": row[1]} for row in rows]
+
+def get_all_sessions():
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute("SELECT session_id, MIN(content) FROM messages WHERE role='user' GROUP BY session_id ORDER BY MAX(timestamp) DESC")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": row[0], "title": row[1][:15] + "..."} for row in rows]
+
+init_db()
 
 # ==========================================
-# 2. 密码验证锁
+# 3. 密码锁
 # ==========================================
 if "password_correct" not in st.session_state:
     st.session_state.password_correct = False
 
 if not st.session_state.password_correct:
-    st.write("##");
-    st.write("##")
+    st.write("##"); st.write("##")
     st.markdown("<h1 style='text-align: center; color: #2a5298;'>🔐 专家评审专用通道</h1>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1,2,1])
     with col2:
         pwd = st.text_input("请输入评审密码：", type="password", placeholder="请输入 judge2026")
         if st.button("进入系统", use_container_width=True):
@@ -48,40 +86,24 @@ if not st.session_state.password_correct:
             else:
                 st.error("密码错误，请重试！")
     st.stop()
-
 # ==========================================
-# 3. 核心配置 (读取 Kimi API)
+# 4. 核心配置
 # ==========================================
 try:
-    deepseek_key = st.secrets["DEEPSEEK_API_KEY"]
+    api_key = st.secrets["DEEPSEEK_API_KEY"]
 except Exception:
-    # 本地测试降级方案
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "sk-your-api-key-here")
+    api_key = os.getenv("DEEPSEEK_API_KEY", "sk-你的Kimi真实Key")
 
-# 接入 Kimi (月之暗面) 大模型
-client = OpenAI(api_key=deepseek_key, base_url="https://api.moonshot.cn/v1")
+client = OpenAI(api_key=api_key, base_url="https://api.moonshot.cn/v1")
 
 # ==========================================
-# 4. 产业数据库与工具定义 (Function Calling)
+# 5. 工具定义
 # ==========================================
 INDUSTRY_DB = {
-    "数据分析师": {
-        "salary": "15k - 25k",
-        "skills": ["SQL", "Python", "Tableau", "统计学", "业务思维"],
-        "companies": ["字节跳动", "美团", "招商银行"]
-    },
-    "AI大模型工程师": {
-        "salary": "25k - 45k",
-        "skills": ["PyTorch", "LangChain", "RAG架构", "Prompt Engineering"],
-        "companies": ["百度", "阿里云", "月之暗面"]
-    },
-    "前端开发": {
-        "salary": "12k - 20k",
-        "skills": ["React", "Vue", "TypeScript", "性能优化"],
-        "companies": ["腾讯", "小米", "网易"]
-    }
+    "数据分析师": {"salary": "15k - 25k", "skills": ["SQL", "Python", "Tableau", "统计学", "业务思维"], "companies": ["字节跳动", "美团", "招商银行"]},
+    "AI大模型工程师": {"salary": "25k - 45k", "skills": ["PyTorch", "LangChain", "RAG架构", "Prompt Engineering"], "companies": ["百度", "阿里云", "月之暗面"]},
+    "前端开发": {"salary": "12k - 20k", "skills": ["React", "Vue", "TypeScript", "性能优化"], "companies": ["腾讯", "小米", "网易"]}
 }
-
 
 def get_learning_path(major: str, target_job: str) -> str:
     job_info = None
@@ -90,33 +112,20 @@ def get_learning_path(major: str, target_job: str) -> str:
             job_info = INDUSTRY_DB[key]
             target_job = key
             break
-
     if not job_info:
-        return f"抱歉，暂未收录《{target_job}》的详细数据。请结合你《{major}》的专业基础，去招聘网站查看具体要求。"
-
-    skills_str = "、".join(job_info["skills"])
-    comp_str = "、".join(job_info["companies"])
-
-    return (
-        f"【产业情报局】近期《{target_job}》市场行情：\n"
-        f"💰 薪资参考：{job_info['salary']}\n"
-        f"🛠️ 核心技能：{skills_str}\n"
-        f"🏢 招聘大厂：{comp_str}\n"
-        f"请结合学生专业《{major}》和上述真实要求，为他定制一份学习路径。"
-    )
-
+        return f"抱歉，暂未收录《{target_job}》的详细数据。"
+    return f"【产业情报】《{target_job}》薪资: {job_info['salary']}, 技能: {', '.join(job_info['skills'])}, 大厂: {', '.join(job_info['companies'])}。请结合《{major}》给出学习路径。"
 
 def assess_student_ability(student_id: str, topic: str, score: int) -> str:
-    return f"【系统记录】已将学号{student_id}的《{topic}》成绩({score}分)存入系统数据库。学生能力画像已更新。"
+    return f"【系统记录】已将学号{student_id}的《{topic}》成绩({score}分)存入数据库。"
 
 
 tools = [
-    {"type": "function", "function": {"name": "get_learning_path",
-                                      "description": "根据学生的专业和目标岗位，从产业情报局获取最新岗位需求、薪资与技能要求，生成个性化学习路径",
+    {"type": "function", "function": {"name": "get_learning_path", "description": "获取产业需求与薪资",
                                       "parameters": {"type": "object", "properties": {"major": {"type": "string"},
                                                                                       "target_job": {"type": "string"}},
                                                      "required": ["major", "target_job"]}}},
-    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录学生成绩并更新能力画像",
+    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录成绩",
                                       "parameters": {"type": "object", "properties": {"student_id": {"type": "string"},
                                                                                       "topic": {"type": "string"},
                                                                                       "score": {"type": "integer"}},
@@ -125,42 +134,39 @@ tools = [
 available_functions = {"get_learning_path": get_learning_path, "assess_student_ability": assess_student_ability}
 
 # ==========================================
-# 5. 左侧控制台 (侧边栏)
+# 6. 侧边栏 (历史、控制台、上传)
 # ==========================================
 with st.sidebar:
     st.markdown("<h2 style='text-align: center; color: #2a5298;'>⚙️ 系统控制台</h2>", unsafe_allow_html=True)
 
-    persona = st.selectbox("选择导师人设", ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"])
+    # 会话初始化
+    if "current_session_id" not in st.session_state:
+        import uuid
+
+        st.session_state.current_session_id = str(uuid.uuid4())[:8]
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "system", "content": "你是一个全能的AI教育智能体。"}]
+
+    persona = st.selectbox("选择导师人设", ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],
+                           key="persona_key")
     prompt_map = {
         "默认全场景导师": "你是一个全能的AI教育智能体，请用专业、鼓励的语气回答学生的问题。",
-        "严厉的考研导师": "你是一个极其严厉的考研导师。你的回答必须一针见血，指出学生的不足，绝不废话。",
-        "幽默风趣的学长": "你是一个幽默风趣的学长。你喜欢用网络梗和生活中的段子来打比方。",
-        "职场资深HR": "你是一个世界500强企业的资深HR。你会从求职、薪资的角度给出最实用的建议。"
+        "严厉的考研导师": "你是一个极其严厉的考研导师。你的回答必须一针见血。",
+        "幽默风趣的学长": "你是一个幽默风趣的学长。你喜欢用网络梗来打比方。",
+        "职场资深HR": "你是一个世界500强企业的资深HR。你会从求职、薪资角度给出建议。"
     }
-
-    st.divider()
-    st.markdown("#### 📊 运行状态")
-    st.success("🟢 大模型接口：已连接 (Kimi)")
-    st.info("🛠️ 工具链：已加载 (2个)")
-    if "vectorstore" in st.session_state:
-        st.success("📚 本地知识库：已就绪")
-    else:
-        st.warning("📚 本地知识库：未加载")
+    st.session_state.messages[0]["content"] = prompt_map[persona]
 
     st.divider()
     st.markdown("#### 📚 教材知识库")
     uploaded_file = st.file_uploader("上传 PDF 文件", type="pdf", label_visibility="collapsed")
-
     if st.button("构建/更新知识库", use_container_width=True) and uploaded_file is not None:
         with st.spinner("正在解析教材..."):
             file_path = f"./temp_{uploaded_file.name}"
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-
-            loader = PyPDFLoader(file_path)
-            docs = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-            splits = text_splitter.split_documents(docs)
+            docs = PyPDFLoader(file_path).load()
+            splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(docs)
 
 
             @st.cache_resource(show_spinner="加载向量模型中...")
@@ -174,161 +180,154 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    if st.button("🗑️ 清空当前对话记忆", use_container_width=True):
+    st.markdown("#### 🖼️ 多模态识图")
+    uploaded_image = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+    if uploaded_image is not None:
+        st.image(uploaded_image, use_container_width=True)
+    st.divider()
+    st.markdown("#### 🗂️ 历史记录")
+    if st.button("➕ 开启全新对话", use_container_width=True):
+        import uuid
+
+        st.session_state.current_session_id = str(uuid.uuid4())[:8]
         st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
         st.rerun()
 
+    for sess in get_all_sessions():
+        if st.button(f"💬 {sess['title']}", key=f"load_{sess['id']}", use_container_width=True):
+            st.session_state.current_session_id = sess['id']
+            st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}] + get_messages(sess['id'])
+            st.rerun()
+
 # ==========================================
-# 6. 主界面与聊天逻辑
+# 7. 主界面与聊天逻辑
 # ==========================================
 st.markdown('<h1 class="hero-title">🎓 全场景 AI 智慧导师</h1>', unsafe_allow_html=True)
 st.markdown(f'<p class="hero-subtitle">当前模式：<b>{persona}</b> | 基于 RAG 与多工具调用的个性化教育系统</p >',
             unsafe_allow_html=True)
 
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
-else:
-    if st.session_state.messages[0]["content"] != prompt_map[persona]:
-        st.session_state.messages[0]["content"] = prompt_map[persona]
-
+# 渲染历史消息 (兼容文字和列表)
 for msg in st.session_state.messages:
     if msg["role"] in ["user", "assistant"] and msg.get("content"):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "user" else "🎓"):
-            st.markdown(msg["content"])
+            if isinstance(msg["content"], list):
+                for item in msg["content"]:
+                    if item.get("type") == "text":
+                        st.markdown(item["text"])
+            else:
+                st.markdown(msg["content"])
+# 接收输入
+if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮我查一下AI工程师的薪资", key="main_chat_box"):
 
-if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮我查一下AI工程师的薪资"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # 1. 处理多模态内容
+    current_user_content = [{"type": "text", "text": prompt}]
+    if 'uploaded_image' in locals() and uploaded_image is not None:
+        base64_image = base64.b64encode(uploaded_image.read()).decode('utf-8')
+        current_user_content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}})
+
+    # 2. 保存并渲染用户消息
+    st.session_state.messages.append({"role": "user", "content": current_user_content})
+    save_message(st.session_state.current_session_id, "user", prompt)
+
     with st.chat_message("user", avatar="🧑‍🎓"):
         st.markdown(prompt)
+        if 'uploaded_image' in locals() and uploaded_image is not None:
+            st.image(uploaded_image, width=300)
 
+    # 3. AI 回复
     with st.chat_message("assistant", avatar="🎓"):
-        with st.spinner("导师正在分析..."):
+        with st.spinner("导师正在思考..."):
 
-            # 记忆压缩机制
+            # 记忆截断
             if len(st.session_state.messages) > 10:
                 st.session_state.messages = [st.session_state.messages[0]] + st.session_state.messages[-6:]
 
-            # RAG 检索
+            # RAG 检索（只针对纯文本）
+            retrieved_docs = []
             rag_context = ""
-            if "vectorstore" in st.session_state:
+            if "vectorstore" in st.session_state and uploaded_image is None:
                 retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
-                docs = retriever.invoke(prompt)
-                if docs:
-                    rag_context = "\n\n".join([doc.page_content for doc in docs])
+                retrieved_docs = retriever.invoke(prompt)
+                if retrieved_docs:
+                    rag_context = "\n\n".join([doc.page_content for doc in retrieved_docs])
 
             current_messages = st.session_state.messages.copy()
             if rag_context:
-                current_messages[0]["content"] += f"\n\n【参考教材内容】：\n{rag_context}\n请结合以上教材内容回答。"
+                current_messages[0]["content"] += f"\n\n【参考教材内容】：\n{rag_context}"
 
-            # Agent 工具循环
-            while True:
+            # Agent 循环 + 流式输出 + 429 重试
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model="kimi-k2.6",  # 适配 Kimi 体验金的稳定模型
+                        model="kimi-k2.6",
                         messages=current_messages,
                         tools=tools,
-                        tool_choice="auto"
+                        tool_choice="auto",
+                        stream=True
                     )
-                    msg = response.choices[0].message
 
-                    if not msg.tool_calls:
-                        st.markdown(msg.content)
-                        st.session_state.messages.append({"role": "assistant", "content": msg.content})
-                        break
+                    full_content = ""
+                    tool_calls_dict = {}
+                    message_placeholder = st.empty()
 
-                    current_messages.append(msg)
-                    for tool_call in msg.tool_calls:
-                        func_name = tool_call.function.name
-                        func_args = json.loads(tool_call.function.arguments)
-                        st.toast(f"⚙️ 正在调用工具：{func_name}...")
+                    for chunk in response:
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            full_content += delta.content
+                            message_placeholder.markdown(full_content + "▌")
+                        if delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                idx = tc.index
+                                if idx not in tool_calls_dict:
+                                    tool_calls_dict[idx] = {"id": tc.id, "type": "function",
+                                                            "function": {"name": tc.function.name, "arguments": ""}}
+                                if tc.function.arguments:
+                                    tool_calls_dict[idx]["function"]["arguments"] += tc.function.arguments
 
-                        func_result = available_functions[func_name](**func_args)
-                        current_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": str(func_result)
-                        })
+                    message_placeholder.markdown(full_content)
+
+                    if tool_calls_dict:
+                        tool_calls_list = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
+                        current_messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls_list})
+                        for tc in tool_calls_list:
+                            func_name = tc["function"]["name"]
+                            func_args = json.loads(tc["function"]["arguments"])
+                            st.toast(f"⚙️ 正在调用：{func_name}...")
+                            func_result = available_functions[func_name](**func_args)
+                            current_messages.append(
+                                {"role": "tool", "tool_call_id": tc["id"], "content": str(func_result)})
+                        continue  # 工具执行完，重试生成文本
+                    else:
+                        # 展示 RAG 溯源
+                        if retrieved_docs:
+                            with st.expander("🔍 查看参考教材片段"):
+                                for i, doc in enumerate(retrieved_docs):
+                                    st.info(f"**片段 {i + 1}**: {doc.page_content[:200]}...")
+
+                        st.session_state.messages.append({"role": "assistant", "content": full_content})
+                        save_message(st.session_state.current_session_id, "assistant", full_content)
+                        break  # 成功完成，退出重试循环
+
                 except Exception as e:
-                    st.error(f"💥 运行报错：{e}")
+                    err_msg = str(e)
+                    if "429" in err_msg or "rate_limit" in err_msg:
+                        if attempt < max_retries - 1:
+                            st.warning(f"⏳ 请求太频繁，正在重试 ({attempt + 1}/{max_retries})...")
+                            time.sleep(3)  # 强制等待3秒
+                            continue
+                        else:
+                            st.error("💥 账号触发限流，请稍后再试或升级Kimi账户等级。")
+                    else:
+                        st.error(f"💥 运行报错：{e}")
                     break
+# 8. 开发者调试窗口
+# ==========================================
 with st.expander("🛠️ 开发者调试窗口"):
-    st.write("当前模型：Kimi")
-    st.write("历史消息长度：", len(st.session_state.messages))
-    with st.sidebar:
-        st.markdown("<h2 style='text-align: center; color: #2a5298;'>⚙️ 系统控制台</h2>", unsafe_allow_html=True)
-
-        # ==========================================
-        # 🌟 新增功能：历史记录管理器
-        # ==========================================
-        st.markdown("#### 🗂️ 历史会话记录")
-
-        # 初始化历史会话池
-        if "all_sessions" not in st.session_state:
-            st.session_state.all_sessions = {}  # 字典格式：{"会话ID": {"title": "...", "messages": [...]}}
-
-        if "current_session_id" not in st.session_state:
-            st.session_state.current_session_id = "default"
-
-        # 搜索框
-        search_query = st.text_input("🔍 搜索历史记录（输入关键词）", placeholder="例如：数据分析师")
-
-        # 新建对话按钮
-        if st.button("➕ 开启全新对话", use_container_width=True):
-            import uuid
-
-            new_id = str(uuid.uuid4())[:8]  # 生成一个简短的随机ID
-            st.session_state.current_session_id = new_id
-            st.session_state.messages = [{"role": "system", "content": "你是一个全能的AI教育智能体..."}]
-            # 每次发消息时，同步更新历史记录池
-            if st.session_state.current_session_id not in st.session_state.all_sessions:
-                st.session_state.all_sessions[st.session_state.current_session_id] = {"title": prompt[:10],
-                                                                                      "messages": []}
-
-            # 用第一句话作为会话标题
-            if len(st.session_state.messages) <= 2:
-                st.session_state.all_sessions[st.session_state.current_session_id]["title"] = prompt[:15] + "..."
-
-            # 实时更新当前会话的最新消息
-            st.session_state.all_sessions[st.session_state.current_session_id]["messages"] = st.session_state.messages
-            st.session_state.all_sessions[new_id] = {
-                "title": f"新对话 {len(st.session_state.all_sessions) + 1}",
-                "messages": st.session_state.messages
-            }
-            st.rerun()
-
-        # 展示历史记录列表
-        if st.session_state.all_sessions:
-            for sid, session_data in list(st.session_state.all_sessions.items())[::-1]:  # 倒序排列
-                title = session_data.get("title", "未命名对话")
-
-                # 如果有搜索词，进行过滤
-                if search_query:
-                    # 检查标题或聊天记录里有没有这个词
-                    has_keyword = search_query in title or any(
-                        search_query in str(m.get("content", "")) for m in session_data["messages"])
-                    if not has_keyword:
-                        continue  # 没匹配到就跳过
-
-                # 用折叠面板展示每个历史记录
-                with st.expander(f"💬 {title}"):
-                    # 展示该会话的聊天气泡（截取最后几句展示）
-                    for msg in session_data["messages"][-4:]:
-                        if msg["role"] in ["user", "assistant"]:
-                            st.caption(f"**{msg['role']}**: {msg['content'][:50]}...")
-
-                    # 加载该记录
-                    if st.button("继续这段对话", key=f"load_{sid}", use_container_width=True):
-                        st.session_state.current_session_id = sid
-                        st.session_state.messages = session_data["messages"]
-                        st.rerun()
-
-        st.divider()
-        # ==========================================
-        # 下面是原有的角色选择、系统状态等代码
-        # ==========================================
-        persona = st.selectbox("选择导师人设", ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],key="persona_selector")
-        # ... （保留你原有的 prompt_map 和 状态监控 代码）...
+    st.write(f"**当前大模型:** Kimi (kimi-k2.6)")
+    st.write(f"**历史消息长度:** {len(st.session_state.messages)} 条")
     if "vectorstore" in st.session_state:
-        st.success("RAG 知识库已就绪")
+        st.success("✅ RAG 本地知识库已就绪")
     else:
-        st.warning("RAG 知识库未加载")
+        st.warning("⚠️ RAG 本地知识库未加载")
