@@ -107,7 +107,12 @@ INDUSTRY_DB = {
     "AI大模型工程师": {"salary": "25k - 45k", "skills": ["PyTorch", "LangChain", "RAG架构", "Prompt Engineering"], "companies": ["百度", "阿里云", "月之暗面"]},
     "前端开发": {"salary": "12k - 20k", "skills": ["React", "Vue", "TypeScript", "性能优化"], "companies": ["腾讯", "小米", "网易"]}
 }
-
+COLLEGE_DB = {
+    "清华大学": {"score": "690+", "rank": "全省前100", "majors": ["计算机", "经管", "建筑"], "tag": "985/C9"},
+    "浙江大学": {"score": "660+", "rank": "全省前1500", "majors": ["软件工程", "临床医学", "农学"], "tag": "985/综合类"},
+    "厦门大学": {"score": "630+", "rank": "全省前5000", "majors": ["会计", "海洋科学", "经济学"], "tag": "985/风景优美"},
+    "深圳大学": {"score": "600+", "rank": "全省前20000", "majors": ["计算机", "建筑", "金融"], "tag": "双非/就业极佳"}
+}
 def get_learning_path(major: str, target_job: str) -> str:
     job_info = None
     for key in INDUSTRY_DB:
@@ -118,24 +123,31 @@ def get_learning_path(major: str, target_job: str) -> str:
     if not job_info:
         return f"抱歉，暂未收录《{target_job}》的详细数据。"
     return f"【产业情报】《{target_job}》薪资: {job_info['salary']}, 技能: {', '.join(job_info['skills'])}, 大厂: {', '.join(job_info['companies'])}。请结合《{major}》给出学习路径。"
-
+def get_college_info(college_name: str) -> str:
+    info = None
+    for key in COLLEGE_DB:
+        if key in college_name:
+            info = COLLEGE_DB[key]
+            college_name = key
+            break
+    if not info:
+        return f"抱歉，系统暂未收录《{college_name}》的详细录取数据。"
+    return f"【志愿情报局】《{college_name}》往年录取分: {info['score']}，位次: {info['rank']}。王牌专业: {', '.join(info['majors'])}。院校标签: {info['tag']}。"
 
 def assess_student_ability(student_id: str, topic: str, score: int) -> str:
     return f"【系统记录】已将学号{student_id}的《{topic}》成绩({score}分)存入数据库。"
-
-
 tools = [
-    {"type": "function", "function": {"name": "get_learning_path", "description": "获取产业需求与薪资",
-                                      "parameters": {"type": "object", "properties": {"major": {"type": "string"},
-                                                                                      "target_job": {"type": "string"}},
-                                                     "required": ["major", "target_job"]}}},
-    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录成绩",
-                                      "parameters": {"type": "object", "properties": {"student_id": {"type": "string"},
-                                                                                      "topic": {"type": "string"},
-                                                                                      "score": {"type": "integer"}},
-                                                     "required": ["student_id", "topic", "score"]}}}
+    {"type": "function", "function": {"name": "get_learning_path", "description": "获取职业薪资与技能需求", "parameters": {"type": "object", "properties": {"major": {"type": "string"}, "target_job": {"type": "string"}}, "required": ["major", "target_job"]}}},
+    {"type": "function", "function": {"name": "get_college_info", "description": "当用户询问高考志愿、某所大学的分数线、位次、王牌专业时调用此工具", "parameters": {"type": "object", "properties": {"college_name": {"type": "string", "description": "大学名称，如厦门大学"}}, "required": ["college_name"]}}},
+    {"type": "function", "function": {"name": "assess_student_ability", "description": "记录成绩", "parameters": {"type": "object", "properties": {"student_id": {"type": "string"}, "topic": {"type": "string"}, "score": {"type": "integer"}}, "required": ["student_id", "topic", "score"]}}}
 ]
-available_functions = {"get_learning_path": get_learning_path, "assess_student_ability": assess_student_ability}
+
+# 更新映射字典
+available_functions = {
+    "get_learning_path": get_learning_path,
+    "get_college_info": get_college_info,
+    "assess_student_ability": assess_student_ability
+}
 
 # ==========================================
 # 5. 侧边栏 (历史记录、控制台、上传)
@@ -148,28 +160,42 @@ with st.sidebar:
         import uuid
 
         st.session_state.current_session_id = str(uuid.uuid4())[:8]
+    # 5.2 模式与人设选择
+    st.markdown("#### 🎛️ 工作模式")
+    app_mode = st.radio("请选择服务场景：", ["大学生职业规划", "高考志愿填报"], horizontal=True)
 
-    # 5.2 角色定义与选择
-    prompt_map = {
-        "默认全场景导师": "你是一个全能的AI教育智能体，请用专业、鼓励的语气回答学生的问题。",
-        "严厉的考研导师": "你是一个极其严厉的考研导师。你的回答必须一针见血。",
-        "幽默风趣的学长": "你是一个幽默风趣的学长。你喜欢用网络梗来打比方。",
-        "职场资深HR": "你是一个世界500强企业的资深HR。你会从求职、薪资角度给出建议。"
-    }
+    st.markdown("#### 🎭 导师人设")
+    if app_mode == "大学生职业规划":
+        persona_options = ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"]
+        prompt_map = {
+            "默认全场景导师": "你是一个全能的AI教育智能体，请用专业、鼓励的语气回答学生的问题。",
+            "严厉的考研导师": "你是一个极其严厉的考研导师。你的回答必须一针见血。",
+            "幽默风趣的学长": "你是一个幽默风趣的学长。你喜欢用网络梗来打比方。",
+            "职场资深HR": "你是一个世界500强企业的资深HR。你会从求职、薪资角度给出建议。"
+        }
+    else:
+        persona_options = ["资深志愿填报专家", "严厉的高中班主任", "知心学长/学姐", "高校招生办老师"]
+        prompt_map = {
+            "资深志愿填报专家": "你是一个拥有10年经验的高考志愿填报专家。你的回答必须客观、谨慎，提醒学生注意‘冲、稳、保’策略。",
+            "严厉的高中班主任": "你是一个严厉的高三班主任。你会一针见血地指出成绩短板，绝不让他们好高骛远。",
+            "知心学长/学姐": "你是一个刚经历过高考的985学长。你会用轻松的语气，分享当年填报志愿踩过的坑。",
+            "高校招生办老师": "你是某双一流高校的招生办老师。你会从学校的优势专业、保研率角度给出建议。"
+        }
 
-    # 5.3 初始化对话状态 (防清空核心)
+    persona = st.selectbox("选择导师角色", persona_options, key="persona_key")
+
+    # 初始化对话状态 (防清空核心)
     if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "system", "content": prompt_map["默认全场景导师"]}]
+        st.session_state.messages = [{"role": "system", "content": prompt_map[persona_options[0]]}]
 
-    persona = st.selectbox(
-        "选择导师人设",
-        ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],
-        key="persona_key"
-    )
-
-    # 只有当角色真的切换时，才更新 System Prompt
+    # 当切换模式或人设时，动态更新 System Prompt，但不破坏历史记录
     if st.session_state.messages[0]["content"] != prompt_map[persona]:
         st.session_state.messages[0]["content"] = prompt_map[persona]
+        st.rerun()  # 刷新一下让状态立刻生效
+
+
+
+
 
     # 5.4 PDF 知识库
     st.divider()
