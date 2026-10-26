@@ -17,7 +17,7 @@ os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 # ==========================================
 # 1. 页面配置与 UI 美化
 # ==========================================
-st.set_page_config(page_title="全场景AI智慧导师", page_icon="🎓", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="启明 AI 导师", page_icon="🌟", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -30,8 +30,9 @@ st.markdown("""
     .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(42, 82, 152, 0.4); }
 </style>
 """, unsafe_allow_html=True)
+
 # ==========================================
-# 2. 数据库初始化 (历史记录持久化)
+# 2. 数据库操作 (历史记录持久化)
 # ==========================================
 def init_db():
     conn = sqlite3.connect('chat_history.db')
@@ -43,12 +44,12 @@ def init_db():
 def save_message(session_id, role, content):
     conn = sqlite3.connect('chat_history.db')
     c = conn.cursor()
-    # 如果是列表(图文混排)，只存文字部分
     if isinstance(content, list):
         content = "".join([item.get("text", "") for item in content if item.get("type") == "text"])
     c.execute("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", (session_id, role, str(content), datetime.datetime.now()))
     conn.commit()
     conn.close()
+
 def get_messages(session_id):
     conn = sqlite3.connect('chat_history.db')
     c = conn.cursor()
@@ -65,9 +66,13 @@ def get_all_sessions():
     conn.close()
     return [{"id": row[0], "title": row[1][:15] + "..."} for row in rows]
 
-init_db()
+def delete_session(session_id):
+    conn = sqlite3.connect('chat_history.db')
+    conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
 
-# ==========================================
+init_db()
 # 3. 密码锁
 # ==========================================
 if "password_correct" not in st.session_state:
@@ -75,7 +80,7 @@ if "password_correct" not in st.session_state:
 
 if not st.session_state.password_correct:
     st.write("##"); st.write("##")
-    st.markdown("<h1 style='text-align: center; color: #2a5298;'>🔐 专家评审专用通道</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #2a5298;'>🌟 启明 AI · 专家评审通道</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         pwd = st.text_input("请输入评审密码：", type="password", placeholder="请输入 judge2026")
@@ -86,8 +91,9 @@ if not st.session_state.password_correct:
             else:
                 st.error("密码错误，请重试！")
     st.stop()
+
 # ==========================================
-# 4. 核心配置
+# 4. 核心客户端与工具
 # ==========================================
 try:
     api_key = st.secrets["DEEPSEEK_API_KEY"]
@@ -96,9 +102,6 @@ except Exception:
 
 client = OpenAI(api_key=api_key, base_url="https://api.moonshot.cn/v1")
 
-# ==========================================
-# 5. 工具定义
-# ==========================================
 INDUSTRY_DB = {
     "数据分析师": {"salary": "15k - 25k", "skills": ["SQL", "Python", "Tableau", "统计学", "业务思维"], "companies": ["字节跳动", "美团", "招商银行"]},
     "AI大模型工程师": {"salary": "25k - 45k", "skills": ["PyTorch", "LangChain", "RAG架构", "Prompt Engineering"], "companies": ["百度", "阿里云", "月之暗面"]},
@@ -115,6 +118,7 @@ def get_learning_path(major: str, target_job: str) -> str:
     if not job_info:
         return f"抱歉，暂未收录《{target_job}》的详细数据。"
     return f"【产业情报】《{target_job}》薪资: {job_info['salary']}, 技能: {', '.join(job_info['skills'])}, 大厂: {', '.join(job_info['companies'])}。请结合《{major}》给出学习路径。"
+
 
 def assess_student_ability(student_id: str, topic: str, score: int) -> str:
     return f"【系统记录】已将学号{student_id}的《{topic}》成绩({score}分)存入数据库。"
@@ -134,29 +138,40 @@ tools = [
 available_functions = {"get_learning_path": get_learning_path, "assess_student_ability": assess_student_ability}
 
 # ==========================================
-# 6. 侧边栏 (历史、控制台、上传)
+# 5. 侧边栏 (历史记录、控制台、上传)
 # ==========================================
 with st.sidebar:
     st.markdown("<h2 style='text-align: center; color: #2a5298;'>⚙️ 系统控制台</h2>", unsafe_allow_html=True)
 
-    # 会话初始化
+    # 5.1 初始化状态
     if "current_session_id" not in st.session_state:
         import uuid
 
         st.session_state.current_session_id = str(uuid.uuid4())[:8]
-    if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "system", "content": "你是一个全能的AI教育智能体。"}]
 
-    persona = st.selectbox("选择导师人设", ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],
-                           key="persona_key")
+    # 5.2 角色定义与选择
     prompt_map = {
         "默认全场景导师": "你是一个全能的AI教育智能体，请用专业、鼓励的语气回答学生的问题。",
         "严厉的考研导师": "你是一个极其严厉的考研导师。你的回答必须一针见血。",
         "幽默风趣的学长": "你是一个幽默风趣的学长。你喜欢用网络梗来打比方。",
         "职场资深HR": "你是一个世界500强企业的资深HR。你会从求职、薪资角度给出建议。"
     }
-    st.session_state.messages[0]["content"] = prompt_map[persona]
 
+    # 5.3 初始化对话状态 (防清空核心)
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "system", "content": prompt_map["默认全场景导师"]}]
+
+    persona = st.selectbox(
+        "选择导师人设",
+        ["默认全场景导师", "严厉的考研导师", "幽默风趣的学长", "职场资深HR"],
+        key="persona_key"
+    )
+
+    # 只有当角色真的切换时，才更新 System Prompt
+    if st.session_state.messages[0]["content"] != prompt_map[persona]:
+        st.session_state.messages[0]["content"] = prompt_map[persona]
+
+    # 5.4 PDF 知识库
     st.divider()
     st.markdown("#### 📚 教材知识库")
     uploaded_file = st.file_uploader("上传 PDF 文件", type="pdf", label_visibility="collapsed")
@@ -179,11 +194,14 @@ with st.sidebar:
             st.success("✅ 知识库构建完成！")
             st.rerun()
 
+    # 5.5 多模态图片上传
     st.divider()
     st.markdown("#### 🖼️ 多模态识图")
     uploaded_image = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
     if uploaded_image is not None:
         st.image(uploaded_image, use_container_width=True)
+
+    # 5.6 历史记录管理
     st.divider()
     st.markdown("#### 🗂️ 历史记录")
     if st.button("➕ 开启全新对话", use_container_width=True):
@@ -193,20 +211,40 @@ with st.sidebar:
         st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
         st.rerun()
 
-    for sess in get_all_sessions():
-        if st.button(f"💬 {sess['title']}", key=f"load_{sess['id']}", use_container_width=True):
-            st.session_state.current_session_id = sess['id']
-            st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}] + get_messages(sess['id'])
-            st.rerun()
+    if st.button("👑 清空所有历史记录", use_container_width=True):
+        conn = sqlite3.connect('chat_history.db')
+        conn.execute("DELETE FROM messages")
+        conn.commit()
+        conn.close()
+        st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
+        st.rerun()
 
+    # 👇 历史记录列表与删除按钮 (完美缩进)
+    for sess in get_all_sessions():
+        col1, col2 = st.columns([0.8, 0.2])
+        with col1:
+            if st.button(f"💬 {sess['title']}", key=f"load_{sess['id']}", use_container_width=True):
+                st.session_state.current_session_id = sess['id']
+                st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}] + get_messages(
+                    sess['id'])
+                st.rerun()
+        with col2:
+            if st.button("🗑️", key=f"del_{sess['id']}", use_container_width=True):
+                delete_session(sess['id'])
+                if st.session_state.current_session_id == sess['id']:
+                    import uuid
+
+                    st.session_state.current_session_id = str(uuid.uuid4())[:8]
+                    st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
+                st.toast("已删除该条历史记录")
+                st.rerun()
+# 6. 主界面与聊天逻辑
 # ==========================================
-# 7. 主界面与聊天逻辑
-# ==========================================
-st.markdown('<h1 class="hero-title">🎓 全场景 AI 智慧导师</h1>', unsafe_allow_html=True)
-st.markdown(f'<p class="hero-subtitle">当前模式：<b>{persona}</b> | 基于 RAG 与多工具调用的个性化教育系统</p >',
+st.markdown('<h1 class="hero-title">🌟 启明 AI 智慧导师</h1>', unsafe_allow_html=True)
+st.markdown(f'<p class="hero-subtitle">当前模式：<b>{persona}</b> | 驱散迷茫，点亮产教融合之路</p >',
             unsafe_allow_html=True)
 
-# 渲染历史消息 (兼容文字和列表)
+# 渲染历史消息
 for msg in st.session_state.messages:
     if msg["role"] in ["user", "assistant"] and msg.get("content"):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "user" else "🎓"):
@@ -216,17 +254,16 @@ for msg in st.session_state.messages:
                         st.markdown(item["text"])
             else:
                 st.markdown(msg["content"])
-# 接收输入
+
+# 接收输入与 AI 回复
 if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮我查一下AI工程师的薪资", key="main_chat_box"):
 
-    # 1. 处理多模态内容
     current_user_content = [{"type": "text", "text": prompt}]
     if 'uploaded_image' in locals() and uploaded_image is not None:
         base64_image = base64.b64encode(uploaded_image.read()).decode('utf-8')
         current_user_content.append(
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}})
 
-    # 2. 保存并渲染用户消息
     st.session_state.messages.append({"role": "user", "content": current_user_content})
     save_message(st.session_state.current_session_id, "user", prompt)
 
@@ -235,15 +272,10 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
         if 'uploaded_image' in locals() and uploaded_image is not None:
             st.image(uploaded_image, width=300)
 
-    # 3. AI 回复
     with st.chat_message("assistant", avatar="🎓"):
         with st.spinner("导师正在思考..."):
 
-            # 记忆截断
-            if len(st.session_state.messages) > 10:
-                st.session_state.messages = [st.session_state.messages[0]] + st.session_state.messages[-6:]
-
-            # RAG 检索（只针对纯文本）
+            # RAG 检索
             retrieved_docs = []
             rag_context = ""
             if "vectorstore" in st.session_state and uploaded_image is None:
@@ -256,7 +288,7 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
             if rag_context:
                 current_messages[0]["content"] += f"\n\n【参考教材内容】：\n{rag_context}"
 
-            # Agent 循环 + 流式输出 + 429 重试
+            # 流式输出与 429 重试
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -298,9 +330,8 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
                             func_result = available_functions[func_name](**func_args)
                             current_messages.append(
                                 {"role": "tool", "tool_call_id": tc["id"], "content": str(func_result)})
-                        continue  # 工具执行完，重试生成文本
+                        continue
                     else:
-                        # 展示 RAG 溯源
                         if retrieved_docs:
                             with st.expander("🔍 查看参考教材片段"):
                                 for i, doc in enumerate(retrieved_docs):
@@ -308,21 +339,23 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
 
                         st.session_state.messages.append({"role": "assistant", "content": full_content})
                         save_message(st.session_state.current_session_id, "assistant", full_content)
-                        break  # 成功完成，退出重试循环
+                        break
 
                 except Exception as e:
                     err_msg = str(e)
                     if "429" in err_msg or "rate_limit" in err_msg:
                         if attempt < max_retries - 1:
                             st.warning(f"⏳ 请求太频繁，正在重试 ({attempt + 1}/{max_retries})...")
-                            time.sleep(3)  # 强制等待3秒
+                            time.sleep(3)
                             continue
                         else:
-                            st.error("💥 账号触发限流，请稍后再试或升级Kimi账户等级。")
+                            st.error("💥 账号触发限流，请稍后再试。")
                     else:
                         st.error(f"💥 运行报错：{e}")
                     break
-# 8. 开发者调试窗口
+
+# ===============================
+# 7. 开发者调试窗口
 # ==========================================
 with st.expander("🛠️ 开发者调试窗口"):
     st.write(f"**当前大模型:** Kimi (kimi-k2.6)")
