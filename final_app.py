@@ -200,14 +200,20 @@ with st.sidebar:
     # 5.4 PDF 知识库
     st.divider()
     st.markdown("#### 📚 教材知识库")
-    uploaded_file = st.file_uploader("上传 PDF 文件", type="pdf", label_visibility="collapsed")
-    if st.button("构建/更新知识库", use_container_width=True) and uploaded_file is not None:
-        with st.spinner("正在解析教材..."):
-            file_path = f"./temp_{uploaded_file.name}"
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            docs = PyPDFLoader(file_path).load()
-            splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(docs)
+    uploaded_files = st.file_uploader("上传 PDF 文件(可多选)", type="pdf",accept_multiple_files=True,label_visibility="collapsed")
+    if st.button("构建/更新知识库", use_container_width=True) and uploaded_files:
+        with st.spinner("正在解析教材{len(uploaded_files)}份教材..."):
+            all_docs=[]
+            for uf in uploaded_files:
+
+                 file_path = f"./temp_{uf.name}"
+                 with open(file_path, "wb") as f:
+
+                      f.write(uf.getbuffer())
+                 docs = PyPDFLoader(file_path).load()
+                 all_docs.expend(docs)
+                 os.remove(file_path)
+            splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(all_docs)
 
 
             @st.cache_resource(show_spinner="加载向量模型中...")
@@ -217,15 +223,19 @@ with st.sidebar:
 
             st.session_state.vectorstore = Chroma.from_documents(documents=splits, embedding=get_embeddings())
             os.remove(file_path)
-            st.success("✅ 知识库构建完成！")
+            st.success(f"✅ 成功解析{len(uploaded_files)}份文档，知识库构建完成!")
             st.rerun()
 
     # 5.5 多模态图片上传
     st.divider()
     st.markdown("#### 🖼️ 多模态识图")
-    uploaded_image = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
-    if uploaded_image is not None:
-        st.image(uploaded_image, use_container_width=True)
+    uploaded_images = st.file_uploader("上传图片(可多选)", type=["jpg", "jpeg", "png"],accept_multiple_files=True, label_visibility="collapsed")
+    if uploaded_images:
+        cols=st.columns(min(len(uploaded_images), 3))
+        for idx, img in enumerate(uploaded_images):
+            with cols[idx % 3]:
+
+                  st.image(img,   use_container_width=True)
 
     # 5.6 历史记录管理
     st.divider()
@@ -285,9 +295,12 @@ for msg in st.session_state.messages:
 if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮我查一下AI工程师的薪资", key="main_chat_box"):
 
     current_user_content = [{"type": "text", "text": prompt}]
-    if 'uploaded_image' in locals() and uploaded_image is not None:
-        base64_image = base64.b64encode(uploaded_image.read()).decode('utf-8')
-        current_user_content.append(
+    if 'uploaded_images' in locals() and uploaded_images:
+        for img in uploaded_images:
+
+             base64_image = base64.b64encode(img.read()).decode('utf-8')
+
+             current_user_content.append(
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}})
 
     st.session_state.messages.append({"role": "user", "content": current_user_content})
@@ -295,8 +308,9 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
 
     with st.chat_message("user", avatar="🧑‍🎓"):
         st.markdown(prompt)
-        if 'uploaded_image' in locals() and uploaded_image is not None:
-            st.image(uploaded_image, width=300)
+        if 'uploaded_image' in locals() and uploaded_images:
+            for img in uploaded_images:
+                st.image(img, width=300)
 
     with st.chat_message("assistant", avatar="🎓"):
         with st.spinner("导师正在思考..."):
@@ -304,7 +318,7 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
             # RAG 检索
             retrieved_docs = []
             rag_context = ""
-            if "vectorstore" in st.session_state and uploaded_image is None:
+            if "vectorstore" in st.session_state and uploaded_images:
                 retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
                 retrieved_docs = retriever.invoke(prompt)
                 if retrieved_docs:
