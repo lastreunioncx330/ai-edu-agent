@@ -205,14 +205,26 @@ with st.sidebar:
         with st.spinner("正在解析教材{len(uploaded_files)}份教材..."):
             all_docs=[]
             for uf in uploaded_files:
-
+                 save_filename=uf.name.replace(" ","_")
                  file_path = f"./temp_{uf.name}"
                  with open(file_path, "wb") as f:
 
                       f.write(uf.getbuffer())
-                 docs = PyPDFLoader(file_path).load()
-                 all_docs.expend(docs)
-                 os.remove(file_path)
+                 loader=PyPDFLoader(file_path)
+                 docs = loader.load()
+                 if isinstance(docs, list):
+
+                    all_docs.extend(docs)
+                 else:
+                     st.warning(f"文件{uf.name}解析异常，以跳过")
+                 try:
+                     if os.path.exists(file_path):
+
+                         os.remove(file_path)
+                 except Exception as e:
+                     print(f"清理失败：{e}")
+        if len(all_docs) > 0:
+
             splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(all_docs)
 
 
@@ -222,9 +234,11 @@ with st.sidebar:
 
 
             st.session_state.vectorstore = Chroma.from_documents(documents=splits, embedding=get_embeddings())
-            os.remove(file_path)
+
             st.success(f"✅ 成功解析{len(uploaded_files)}份文档，知识库构建完成!")
             st.rerun()
+        else:
+            st.error("❌ 文档解析失败，未能提取到文本内容，请检查 PDF 是否为扫描件")
 
     # 5.5 多模态图片上传
     st.divider()
@@ -318,9 +332,10 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
             # RAG 检索
             retrieved_docs = []
             rag_context = ""
-            if "vectorstore" in st.session_state and uploaded_images:
+            if "vectorstore" in st.session_state and not uploaded_images:
                 retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
                 retrieved_docs = retriever.invoke(prompt)
+                
                 if retrieved_docs:
                     rag_context = "\n\n".join([doc.page_content for doc in retrieved_docs])
 
