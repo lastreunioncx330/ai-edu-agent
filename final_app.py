@@ -335,7 +335,7 @@ if prompt := st.chat_input("例如：我想做数据分析师怎么学？ / 帮�
             if "vectorstore" in st.session_state and not uploaded_images:
                 retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 3})
                 retrieved_docs = retriever.invoke(prompt)
-                
+
                 if retrieved_docs:
                     rag_context = "\n\n".join([doc.page_content for doc in retrieved_docs])
 
