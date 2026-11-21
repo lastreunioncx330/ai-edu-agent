@@ -7,7 +7,6 @@ import sqlite3
 import datetime
 import random
 import uuid
-import io
 import streamlit as st
 import plotly.graph_objects as go
 from openai import OpenAI
@@ -15,7 +14,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-import speech_recognition as sr  # 解决 HuggingFace 模型国内下载慢的问题
+
 
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
@@ -590,29 +589,6 @@ for msg in st.session_state.messages:
                     if item.get("type") == "text": st.markdown(item["text"])
             else:
                 st.markdown(msg["content"])
-
-# 语音输入 (含真实识别)
-st.markdown("🎙️ **懒得打字？试试语音输入**")
-audio_value = st.audio_input("点击录制", label_visibility="collapsed", key="main_voice_input")
-if audio_value:
-    col_a1, col_a2 = st.columns([3, 1])
-    with col_a1:
-        st.audio(audio_value)
-    with col_a2:
-        if st.button("❌ 删除语音", use_container_width=True, key="del_voice"): st.rerun()
-
-    with st.spinner("正在识别语音..."):
-        try:
-            r = sr.Recognizer()
-            with sr.AudioFile(io.BytesIO(audio_value.read())) as source:
-                audio_data = r.record(source)
-            text_result = r.recognize_google(audio_data, language="zh-CN")
-            st.success(f"🗣️ 识别结果：{text_result}")
-            st.session_state.pending_prompt = text_result
-            add_ability_score("沟通表达", 2)
-            st.rerun()
-        except Exception as e:
-            st.warning(f"语音识别失败，请确保网络通畅：{e}")
 
 # 接收文字输入
 prompt = st.chat_input("例如：我想做数据分析师怎么学？", key="main_chat_box")
