@@ -1,2 +1,2 @@
-
+ffmpeg
 libasound2-devsound2-dev
