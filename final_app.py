@@ -7,6 +7,7 @@ import sqlite3
 import datetime
 import random
 import uuid
+import re
 import streamlit as st
 import plotly.graph_objects as go
 from openai import OpenAI
@@ -110,6 +111,45 @@ def add_ability_score(category, points):
 # 清空情绪粉碎机回调函数
 def clear_vent_text():
     st.session_state.vent_input = ""
+
+
+# ==========================================
+# 数学公式渲染：$$...$$ 块级 / $...$ 行内，公式走 st.latex，其余走 Markdown
+# ==========================================
+_BLOCK_MATH = re.compile(r"\$\$(.*?)\$\$", re.DOTALL)
+_INLINE_MATH = re.compile(r"\$([^$\n]+)\$")
+
+
+def _safe_latex(formula: str):
+    """公式渲染失败时回退为普通文本，避免整段回答报错。"""
+    formula = formula.strip()
+    if not formula:
+        return
+    try:
+        st.latex(formula)
+    except Exception:
+        st.markdown(f"${formula}$")
+
+
+def render_answer(text: str):
+    """把含 $$...$$ / $...$ 的回答拆成 Markdown 段与 LaTeX 段分别渲染。"""
+    if not text:
+        return
+    parts = _BLOCK_MATH.split(text)  # 奇数索引为块级公式
+    for i, part in enumerate(parts):
+        if part == "":
+            continue
+        if i % 2 == 1:
+            _safe_latex(part)
+            continue
+        subs = _INLINE_MATH.split(part)  # 普通文本段再拆行内公式
+        for j, seg in enumerate(subs):
+            if seg == "":
+                continue
+            if j % 2 == 1:
+                _safe_latex(seg)
+            else:
+                st.markdown(seg)
 
 # ==========================================
 # 3. 密码锁
@@ -507,9 +547,15 @@ with st.sidebar:
                     else:
                         st.warning(f"未在知识库中检索到包含「{kw}」的切片，换个关键词试试。")
                 else:
+                    n=len(docs_list)
+                    if n>0:
+
+                        options=list(range(1,min(10,n)+1))
                     # —— 默认预览前 N 条 ——
-                    preview_num = st.slider("预览条数", min_value=1, max_value=min(10, len(docs_list)),
-                                            value=min(3, len(docs_list)))
+                        preview_num = st.selectbox("预览条数",options,index=0)
+                    else:
+                        preview_num=0
+                        st.warning("暂无检测结果")
                     for i in range(preview_num):
                         meta = metas_list[i] if i < len(metas_list) and metas_list[i] else {}
                         src_name = meta.get("source", "未知文件").split("/")[-1]
@@ -586,9 +632,9 @@ for msg in st.session_state.messages:
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "user" else "🎓"):
             if isinstance(msg["content"], list):
                 for item in msg["content"]:
-                    if item.get("type") == "text": st.markdown(item["text"])
+                    if item.get("type") == "text": render_answer(item["text"])
             else:
-                st.markdown(msg["content"])
+                render_answer(msg["content"])
 
 # 接收文字输入
 prompt = st.chat_input("例如：我想做数据分析师怎么学？", key="main_chat_box")
@@ -701,7 +747,8 @@ if prompt:
                                 if tc.function.arguments:
                                     tool_calls_dict[idx]["function"]["arguments"] += tc.function.arguments
 
-                    message_placeholder.markdown(full_content)
+                    message_placeholder.empty()
+                    render_answer(full_content)
 
                     if tool_calls_dict:
                         tool_calls_list = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
