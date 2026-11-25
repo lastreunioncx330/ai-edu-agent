@@ -16,7 +16,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 # ==========================================
@@ -36,6 +35,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 # ==========================================
 # 2. 数据库操作 & 状态初始化
 # ==========================================
@@ -48,6 +48,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def save_message(session_id, role, content, app_mode):
     if app_mode == "心理树洞/情绪疏导": return  # 心理模式阅后即焚
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
@@ -59,6 +60,7 @@ def save_message(session_id, role, content, app_mode):
     conn.commit()
     conn.close()
 
+
 def get_messages(session_id):
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
     c = conn.cursor()
@@ -66,6 +68,7 @@ def get_messages(session_id):
     rows = c.fetchall()
     conn.close()
     return [{"role": row[0], "content": row[1]} for row in rows]
+
 
 def get_all_sessions():
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
@@ -76,17 +79,20 @@ def get_all_sessions():
     conn.close()
     return [{"id": row[0], "title": row[1][:15] + "..."} for row in rows]
 
+
 def delete_session(session_id):
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
     conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
     conn.commit()
     conn.close()
 
+
 def save_profile(user_id, traits):
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
     conn.execute("INSERT OR REPLACE INTO user_profile (user_id, traits) VALUES (?, ?)", (user_id, traits))
     conn.commit()
     conn.close()
+
 
 def get_profile(user_id):
     conn = sqlite3.connect('chat_history.db', check_same_thread=False)
@@ -96,6 +102,7 @@ def get_profile(user_id):
     conn.close()
     return row[0] if row else "暂无历史画像（新用户）"
 
+
 init_db()
 
 # 初始化六维图分数 (全为0)
@@ -103,10 +110,12 @@ if "ability_scores" not in st.session_state:
     st.session_state.ability_scores = {"理论基础": 0, "代码实践": 0, "逻辑思维": 0, "数据敏感": 0, "业务理解": 0,
                                        "沟通表达": 0}
 
+
 def add_ability_score(category, points):
     if category in st.session_state.ability_scores:
         current = st.session_state.ability_scores[category]
         st.session_state.ability_scores[category] = min(100, current + points)
+
 
 # 清空情绪粉碎机回调函数
 def clear_vent_text():
@@ -150,6 +159,7 @@ def render_answer(text: str):
                 _safe_latex(seg)
             else:
                 st.markdown(seg)
+
 
 # ==========================================
 # 3. 密码锁
@@ -196,6 +206,7 @@ EDU_KNOWLEDGE_GRAPH = {
                "core_concepts": ["列表", "字典", "面向对象", "闭包"]}
 }
 
+
 def graph_rag_retrieve(query: str) -> str:
     context = []
     for node, edges in EDU_KNOWLEDGE_GRAPH.items():
@@ -204,6 +215,7 @@ def graph_rag_retrieve(query: str) -> str:
             for relation, targets in edges.items():
                 if isinstance(targets, list): context.append(f"- {relation}: {', '.join(targets)}")
     return "\n".join(context)
+
 
 # 多智能体协作（规划者 + 审查者）
 def multi_agent_collaboration(user_query: str, base_context: str):
@@ -217,19 +229,24 @@ def multi_agent_collaboration(user_query: str, base_context: str):
                                                 messages=[{"role": "user", "content": critic_prompt}])
     return critic_res.choices[0].message.content
 
+
 # 工具定义
 def get_learning_path(major: str, target_job: str) -> str:
     return f"【产业情报】目标岗位《{target_job}》技能需求：SQL、Python等。"
+
 
 def get_college_info(college_name: str) -> str:
     info = COLLEGE_DB.get(college_name, None)
     return f"【志愿情报局】《{college_name}》录取分: {info['score']}" if info else "暂无数据"
 
+
 def assess_student_ability(student_id: str, topic: str, score: int) -> str:
     return f"【系统记录】学号{student_id}的《{topic}》成绩({score}分)已入库。"
 
+
 def generate_quiz(subject: str, difficulty: str) -> str:
     return f"【题库系统】生成了一份《{subject}》{difficulty}难度测试卷。"
+
 
 tools = [
     {"type": "function", "function": {"name": "get_learning_path", "description": "获取职业薪资与技能",
@@ -290,24 +307,30 @@ with st.sidebar:
         st.session_state.current_session_id = str(uuid.uuid4())[:8]
 
     st.markdown("#### 🎛️ 工作模式")
-    app_mode = st.radio("请选择服务场景：", ["大学学业与职业规划", "高中升学与志愿填报", "心理树洞/情绪疏导"], horizontal=True)
+    app_mode = st.radio("请选择服务场景：", ["大学学业与职业规划", "高中升学与志愿填报", "心理树洞/情绪疏导"],
+                        horizontal=True)
 
     if app_mode == "大学学业与职业规划":
-        persona_options = ["默认全场景导师", "严厉的考研导师", "资深的职场HR", "友善的学长/学姐"]
-        prompt_map = {"默认全场景导师": "你是一个全能的AI教育智能体。", "严厉的考研导师": "你是一个极其严厉的考研导师。",
-                      "资深的职场HR": "你是世界500强企业的资深HR", "友善的学长/学姐": "你是一个有着相关经验且乐于分享的学长/学姐"}
+        persona_options = ["默认全场景导师", "温和的考研导师", "资深的职场HR", "友善的学长/学姐"]
+        prompt_map = {"默认全场景导师师": "你是一个全能的AI教育智能体。",
+                      "严厉的考研导师": "你是一个极其温和且负责的考研导师。",
+                      "资深的职场HR": "你是世界500强企业的资深HR",
+                      "友善的学长/学姐": "你是一个有着相关经验且乐于分享的学长/学姐"}
     elif app_mode == "高中升学与志愿填报":
         persona_options = ["资深志愿填报专家", "严厉的高中班主任", "知心的学长/学姐", "高校招生办老师"]
         prompt_map = {"资深志愿填报专家": "你是一个资深高考志愿填报专家。",
-                      "严厉的高中班主任": "你是一个严厉的高三班主任。", "知心的学长/学姐": "你是一个愿意交心的学长/学姐", "高校招生办老师":
+                      "温和的高中班主任": "你是一个性格严厉且负责的高三班主任。",
+                      "知心的学长/学姐": "你是一个愿意交心的学长/学姐", "高校招生办老师":
                           "你是一个公认名牌高校的招生办老师"}
     else:
-        persona_options = ["温柔的心理咨询师", "陪你吐槽的知心树洞"]
+        persona_options = ["温柔的心理咨询师", "陪你吐槽的知心树洞", "客观冷静的分析师"]
         prompt_map = {"温柔的心理咨询师": "你是一个温柔的心理辅导老师。若发现严重自残倾向，立刻提供热线 400-161-9995。",
-                      "陪你吐槽的知心树洞": "你是一个树洞。"}
+                      "陪你吐槽的知心树洞": "你是一个树洞。",
+                      "客观冷静的分析师": "你是一个客观冷静的心理分析师，你不仅提供盲目的情绪安慰，而且用理性的逻辑(如CBT认知行为疗法，ABC情绪模型)当学生倾诉压力时，你必须用理性的逻辑帮他们剖析：A（诱发事件),B(信念/认知),C（情绪结果）。指出他们的认知偏差（如：以偏概全，灾难化情绪),并给出一个具体的心理微行为（如：写情绪日记，正念3分钟），语气专业，克制，有条理"}
 
     persona = st.selectbox("选择导师角色", persona_options, key="persona_key")
-
+    if persona not in prompt_map:
+        persona=list(prompt_map.keys())[0]
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "system", "content": prompt_map[persona]}]
     if st.session_state.messages[0]["content"] != prompt_map[persona]:
@@ -337,7 +360,7 @@ with st.sidebar:
 
         # 🌟 核心修改：只有在通用题库时，才显示科目选择
         if quiz_source == "通用题库":
-            quiz_subject = st.selectbox("选择科目", ["Python编程", "高等数学", "数据结构",'英语四级'])
+            quiz_subject = st.selectbox("选择科目", ["Python编程", "高等数学", "数据结构", '英语四级'])
             quiz_difficulty = st.radio("选择难度", ["基础", "进阶", "地狱"], horizontal=True)
         else:
             # 基于教材生成时，不需要选科目，只需选难度
@@ -369,7 +392,7 @@ with st.sidebar:
                           margin=dict(l=40, r=40, t=20, b=20), height=250)
         st.plotly_chart(fig, use_container_width=True)
 
-    #🌟 模块 B；仅在”志愿填报“下显示
+    # 🌟 模块 B；仅在”志愿填报“下显示
     if app_mode in ["高中升学与志愿填报"]:
         st.divider()
         st.markdown("#### 🎓 教务系统绑定")
@@ -387,7 +410,8 @@ with st.sidebar:
 
         quiz_source = st.radio("出题来源", ["通用题库", "基于上传教材生成"], horizontal=True)
         if quiz_source == "通用题库":
-            quiz_subject = st.selectbox("选择科目", ["语文", "数学", "英语","物理","化学","生物","历史",'政治',"地理"])
+            quiz_subject = st.selectbox("选择科目",
+                                        ["语文", "数学", "英语", "物理", "化学", "生物", "历史", '政治', "地理"])
             quiz_difficulty = st.radio("选择难度", ["基础", "进阶", "地狱"], horizontal=True)
         else:
             quiz_subject = "上传的教材"
@@ -421,6 +445,7 @@ with st.sidebar:
     # ==========================================
     if app_mode == "心理树洞/情绪疏导":
         st.divider()
+        st.error("⚠️ **免责声明**：启明 AI 仅提供倾诉与情绪疏导，**不替代专业的心理咨询与医疗诊断**。若您处于严重危机中，请立即拨打 400-161-9995。")
         st.markdown("#### 🧘 情绪急救箱")
         with st.expander("🫁 478 呼吸放松法"):
             if st.button("▶️ 开始引导", use_container_width=True):
@@ -436,12 +461,16 @@ with st.sidebar:
 
         if "show_balloons" not in st.session_state:
             st.session_state.show_balloons = False
+
+
         def clear_vent():
-            st.session_state.vent_input=""
+            st.session_state.vent_input = ""
+
+
         with st.expander("🗑️ 情绪粉碎机"):
             vent_text = st.text_area("写下烦恼，一键粉碎：", height=100, key="vent_input")
-            if st.button("💥 粉碎烦恼",  use_container_width=True,on_click=clear_vent_text):
-                if vent_text or st.session_state.get("vent_input",'')!="":
+            if st.button("💥 粉碎烦恼", use_container_width=True, on_click=clear_vent_text):
+                if vent_text or st.session_state.get("vent_input", '') != "":
                     pass
                 st.balloons()
                 st.success("🎈烦恼已粉碎！让一切随风而去，今天也要开心哦！")
@@ -475,7 +504,8 @@ with st.sidebar:
     if app_mode in ['大学学业与职业规划', '高中升学与志愿填报']:
         st.divider()
         st.markdown("#### 📚 教材知识库")
-        uploaded_files = st.file_uploader("上传 PDF", type="pdf", accept_multiple_files=True, label_visibility="collapsed")
+        uploaded_files = st.file_uploader("上传 PDF", type="pdf", accept_multiple_files=True,
+                                          label_visibility="collapsed")
 
         col_build, col_clear = st.columns([0.6, 0.4])
         with col_build:
@@ -494,7 +524,8 @@ with st.sidebar:
                         if os.path.exists(file_path):
                             os.remove(file_path)
                     if len(all_docs) > 0:
-                        splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(all_docs)
+                        splits = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(
+                            all_docs)
                         st.session_state.vectorstore = Chroma.from_documents(
                             documents=splits, embedding=get_embeddings())
                         # 记录知识库元信息，供预览面板展示
@@ -527,7 +558,8 @@ with st.sidebar:
                 metas_list = all_data.get("metadatas", []) or []
 
                 # —— 关键词检索 ——
-                kw = st.text_input("关键词检索切片", key="kb_search_kw", placeholder="输入知识点关键词，如：极限、导数、SQL")
+                kw = st.text_input("关键词检索切片", key="kb_search_kw",
+                                   placeholder="输入知识点关键词，如：极限、导数、SQL")
                 kw = (kw or "").strip()
 
                 if kw:
@@ -547,14 +579,14 @@ with st.sidebar:
                     else:
                         st.warning(f"未在知识库中检索到包含「{kw}」的切片，换个关键词试试。")
                 else:
-                    n=len(docs_list)
-                    if n>0:
+                    n = len(docs_list)
+                    if n > 0:
 
-                        options=list(range(1,min(10,n)+1))
-                    # —— 默认预览前 N 条 ——
-                        preview_num = st.selectbox("预览条数",options,index=0)
+                        options = list(range(1, min(10, n) + 1))
+                        # —— 默认预览前 N 条 ——
+                        preview_num = st.selectbox("预览条数", options, index=0)
                     else:
-                        preview_num=0
+                        preview_num = 0
                         st.warning("暂无检测结果")
                     for i in range(preview_num):
                         meta = metas_list[i] if i < len(metas_list) and metas_list[i] else {}
@@ -683,7 +715,7 @@ if prompt:
                         page_num = doc.metadata.get('page', '未知')
                         file_name = doc.metadata.get('source', '上传的教材').split("/")[-1]
                         # 文档内容编号
-                        rag_context += f"\n[引用{i+1}](来自{file_name}第{page_num}页：{doc.page_content})\n"
+                        rag_context += f"\n[引用{i + 1}](来自{file_name}第{page_num}页：{doc.page_content})\n"
                         retrieved_docs_with_scores.append({"index": i + 1, "doc": doc, "score": score, "page": page_num,
                                                            "file_name": file_name})
             # 混合检索关键词强化
@@ -705,24 +737,43 @@ if prompt:
 
         # 2. 流式输出与工具调用
         with st.spinner("导师正在执笔..."):
+            # 复制当前对话记忆
             current_messages = st.session_state.messages.copy()
+
+            # ==========================================
+            # 🌟 第一步：注入“学情”与“长期画像”
+            # ==========================================
             if "current_student_info" in st.session_state:
-                current_messages[0]["content"] += f"\n\n【学情】：{st.session_state.current_student_info}"
-            current_messages[0]["content"] += f"\n\n【画像】：{get_profile(st.session_state.current_session_id)}"
+                current_messages[0]["content"] += f"\n\n【学生真实学情】：{st.session_state.current_student_info}"
 
+            user_traits = get_profile(st.session_state.current_session_id)
+            current_messages[0]["content"] += f"\n\n【用户长期画像】：{user_traits}"
+
+            # 强制指令：必须结合画像与学情
+            current_messages[0]["content"] += "\n\n⚠️【重要】：在回答时，必须结合该学生的真实学情和长期画像，提供个性化建议。绝不能说空话。"
+
+            # ==========================================
+            # 🌟 第二步：注入“知识库”与“诊断格式”
+            # ==========================================
             if combined_context.strip():
-                current_messages[0][
-                    "content"] += f"""\n\n【多维知识库】：\n{combined_context}\n\n【规划师建议】：\n{plan}\n\n⚠️【回答指令】：
-1. 请严格基于上面的多维知识库回答用户的问题。
-2. 如果你引用了知识库里的内容，必须在句末用 [1]、[2] 这样的格式标注引用的片段序号。
-3. 如果没有相关内容，不要强行引用。"""
-            elif "vectorstore" in st.session_state:
-                current_messages[0][
-                    "content"] += f"\n\n【系统提示】：用户已经上传了相关文件，但当前检索未找到匹配片段。请明确告诉用户你已经读取了他的文件，但文件中似乎没有提及这个问题，请他换一种说法或提供更多细节。"
-            else:
-                current_messages[0][
-                    "content"] += f"\n\n【系统提示】：用户当前没有上传任何参考文件。如果你需要资料，请提示他上传。"
+                current_messages[0]["content"] += f"\n\n【多维知识库】：\n{combined_context}\n\n【规划师建议】：\n{plan}"
 
+                # 带有知识库时的回答指令
+                current_messages[0]["content"] += """\n\n⚠️【回答指令】：
+            1. 请严格基于上面的多维知识库回答用户的问题。如果引用了片段，必须在句末标注 [1]、[2]。
+            2. 如果用户询问“怎么学、怎么提升、未来规划”等问题，你必须以【能力诊断报告】的格式输出：
+               - 🎯 能力定位：结合学生画像，指出当前最薄弱的环节。
+               - 📉 差距分析：对比目标岗位或考试要求，还缺哪些核心技能。
+               - 🚀 行动步骤：给出未来 3 天的具体可执行动作（如：刷 5 道题、看某章 PDF）。"""
+
+            elif "vectorstore" in st.session_state:
+                # 有库但没搜到
+                current_messages[0][
+                    "content"] += "\n\n【系统提示】：用户已经上传了相关文件，但当前检索未找到匹配片段。请明确告诉用户你已经读取了文件，但文件中似乎没有提及这个问题。请结合他的学情给出通用建议。"
+            else:
+                # 根本没上传文件
+                current_messages[0][
+                    "content"] += "\n\n【系统提示】：用户当前没有上传任何参考文件。请直接用你的常识，结合该学生的学情与画像回答问题，并提示他如果想获得更精准的回答可以上传资料。"
             max_retries = 3
             for attempt in range(max_retries):
                 try:
