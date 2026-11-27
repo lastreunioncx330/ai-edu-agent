@@ -704,7 +704,21 @@ if prompt:
             graph_context = graph_rag_retrieve(prompt)
             retrieved_docs_with_scores = []
             rag_context = ""
-            if "vectorstore" in st.session_state and app_mode in ["大学学业与职业规划", "高中升学与志愿填报"]:
+            is_summary_query = any(k in prompt for k in ["总结", "概述", "概括", "梳理", "提炼", "知识库", "这份文件", "这份教材", "这份文档", "这本书", "这份策划书"])
+            if "vectorstore" in st.session_state and is_summary_query:
+                # 元提问（如“总结教材知识库内容”）：直接调取库内切片做整体汇总，不走相似度阈值过滤
+                all_data = st.session_state.vectorstore.get()
+                docs_list = all_data.get("documents", []) or []
+                metas_list = all_data.get("metadatas", []) or []
+                top_n = min(6, len(docs_list))
+                for i in range(top_n):
+                    meta = metas_list[i] or {}
+                    page_num = meta.get('page', '未知')
+                    file_name = meta.get('source', '上传的教材').split("/")[-1]
+                    rag_context += f"\n[引用{i + 1}](来自{file_name}第{page_num}页：{docs_list[i]})\n"
+                    retrieved_docs_with_scores.append({"index": i + 1, "page": page_num, "file_name": file_name,
+                                                       "score": None, "snippet": docs_list[i]})
+            elif "vectorstore" in st.session_state and app_mode in ["大学学业与职业规划", "高中升学与志愿填报"]:
                 raw_results = st.session_state.vectorstore.similarity_search_with_relevance_scores(prompt, k=3)
                 valid_docs = []
                 for doc, score in raw_results:
@@ -769,7 +783,7 @@ if prompt:
             elif "vectorstore" in st.session_state:
                 # 有库但没搜到
                 current_messages[0][
-                    "content"] += "\n\n【系统提示】：用户已经上传了相关文件，但当前检索未找到匹配片段。请明确告诉用户你已经读取了文件，但文件中似乎没有提及这个问题。请结合他的学情给出通用建议。"
+                    "content"] += "\n\n【系统提示】：用户已上传并入库了教材文件（库内已有切片），只是当前这个问题没有检索到匹配片段。请告诉用户文件已读取，本次问题在文件中未找到对应内容，建议他换用文件中出现的具体知识点或关键词再提问；不要声称知识库为空，不要说没有加载任何教材内容。"
             else:
                 # 根本没上传文件
                 current_messages[0][
@@ -829,11 +843,18 @@ if prompt:
                                 for item in retrieved_docs_with_scores:
                                     st.markdown(
                                         f"**📍 引用 [{item['index']}]** | 来源：`{item['file_name']}` - **第 {item['page']} 页**")
-                                    # 把相似度转化为百分比进度条
-                                    st.progress(min(float(item['score']), 1.0),
-                                                text=f"匹配相关度: {item['score'] * 100:.1f}%")
+                                    # 把相似度转化为百分比进度条（总结类切片无相似度评分时不显示）
+                                    score = item.get("score")
+                                    if score is not None:
+                                        st.progress(min(float(score), 1.0),
+                                                    text=f"匹配相关度: {float(score) * 100:.1f}%")
                                     # 用引用框把原文框起来，显得高级
-                                    st.info(f"{item['doc'].page_content.strip()}")
+                                    doc = item.get("doc")
+                                    snippet = item.get("snippet")
+                                    if doc is not None:
+                                        st.info(f"{doc.page_content.strip()}")
+                                    elif snippet:
+                                        st.info(f"{snippet.strip()}")
                                     st.write("---")
 
                         st.session_state.messages.append({"role": "assistant", "content": full_content})
